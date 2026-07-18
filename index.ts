@@ -40,6 +40,8 @@ const userCollection = db.collection("user");
 const ordersCollection = db.collection("orders");
 const cartCollection = db.collection("cart");
 const favoritesCollection = db.collection("favorites");
+const inquiriesCollection = db.collection("inquiries");
+const subscribersCollection = db.collection("subscribers");
 
 // Connect to MongoDB
 async function connectDB() {
@@ -166,7 +168,182 @@ app.get("/api/auth/profile", async (req: any, res: any) => {
   }
 });
 
+// Middleware to verify authorization token
+const verifyToken = async (req: any, res: any, next: any) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Missing or invalid token" });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const { payload } = await jwtVerify(token, JWT_SECRET);
+    
+    const user = await userCollection.findOne({ email: payload.email });
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    return res.status(401).json({ success: false, error: "Unauthorized: Invalid or expired token" });
+  }
+};
+
+// Middleware to verify admin role
+const verifyAdmin = (req: any, res: any, next: any) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ success: false, error: "Forbidden: Admin access required" });
+  }
+  next();
+};
+
+// ---------------- ADMIN ROUTES ----------------
+
+// GET Business Overview Stats
+app.get("/api/admin/stats", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const productCount = await productsCollection.countDocuments();
+    const userCount = await userCollection.countDocuments();
+    
+    const orders = await ordersCollection.find({}).toArray();
+    const orderCount = orders.length;
+    const totalSales = orders.reduce((sum: number, order: any) => sum + (Number(order.totalAmount) || 0), 0);
+
+    // Sales chart: group last 7 days of sales
+    const salesChart = [];
+    const today = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      const dateString = date.toLocaleDateString("en-US", { weekday: "short" });
+      
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(date);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const dayOrders = orders.filter((o: any) => {
+        const cDate = new Date(o.createdAt);
+        return cDate >= dayStart && cDate <= dayEnd;
+      });
+
+      const daySales = dayOrders.reduce((sum: number, o: any) => sum + (Number(o.totalAmount) || 0), 0);
+      salesChart.push({
+        name: dateString,
+        Sales: daySales
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        productCount,
+        userCount,
+        orderCount,
+        totalSales
+      },
+      salesChart
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET All Users list
+app.get("/api/admin/users", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const users = await userCollection.find({}).toArray();
+    const mappedUsers = users.map((u: any) => ({
+      id: u._id.toString(),
+      name: u.name,
+      email: u.email,
+      role: u.role || "user",
+      isBlocked: !!u.isBlocked
+    }));
+    res.json({ success: true, users: mappedUsers });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH Toggle Block User
+app.patch("/api/admin/users/:id/block", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { isBlocked } = req.body;
+    
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: "Invalid user ID" });
+    }
+
+    const result = await userCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { isBlocked: !!isBlocked } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    res.json({ success: true, message: `User ${isBlocked ? "blocked" : "unblocked"} successfully` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ---------------- PRODUCTS ROUTES ----------------
+
+// POST Create new product
+app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const { title, shortDescription, fullDescription, price, category, stock, image, specifications } = req.body;
+    if (!title || !shortDescription || !fullDescription || price === undefined || !category || stock === undefined || !image) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
+    }
+
+    const newProduct = {
+      title,
+      shortDescription,
+      fullDescription,
+      price: Number(price),
+      rating: 5.0,
+      category,
+      stock: Number(stock),
+      image,
+      specifications: specifications || {},
+      reviews: []
+    };
+
+    const result = await productsCollection.insertOne(newProduct);
+    res.status(201).json({ success: true, product: { ...newProduct, _id: result.insertedId } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE A product
+app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const result = await productsCollection.deleteOne(query);
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    res.json({ success: true, message: "Product deleted successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // GET all products with filtering, search, sort, and pagination
 app.get("/api/products", async (req: any, res: any) => {
@@ -321,17 +498,31 @@ app.put("/api/cart/:id", async (req: any, res: any) => {
   }
 });
 
+// DELETE Clear entire cart for a user (by email)
+app.delete("/api/cart", async (req: any, res: any) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email query parameter is required" });
+    }
+    await cartCollection.deleteMany({ email });
+    res.json({ success: true, message: "Cart cleared successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // DELETE Remove item from cart
 app.delete("/api/cart/:id", async (req: any, res: any) => {
   try {
     const { id } = req.params;
     let query;
     if (ObjectId.isValid(id)) {
-      query = { _id: new ObjectId(id) };
+      query = { $or: [{ _id: new ObjectId(id) }, { productId: id }] };
     } else {
-      query = { id: id };
+      query = { $or: [{ id: id }, { productId: id }] };
     }
-    const result = await cartCollection.deleteOne(query);
+    const result = await cartCollection.deleteMany(query);
     if (result.deletedCount === 0) {
       return res.status(404).json({ success: false, error: "Cart item not found" });
     }
@@ -397,11 +588,12 @@ app.post("/api/favorites", async (req: any, res: any) => {
 // ---------------- ORDERS ROUTES ----------------
 
 // POST Place a new order
-app.post("/api/orders", async (req: any, res: any) => {
+app.post("/api/orders", verifyToken, async (req: any, res: any) => {
   try {
-    const { email, items, totalAmount, shippingAddress, paymentMethod } = req.body;
-    if (!email || !items || !totalAmount) {
-      return res.status(400).json({ success: false, error: "Email, items, and totalAmount are required" });
+    const { items, totalAmount, shippingAddress, paymentMethod } = req.body;
+    const email = req.user.email;
+    if (!items || !totalAmount) {
+      return res.status(400).json({ success: false, error: "Items and totalAmount are required" });
     }
 
     const newOrder = {
@@ -429,13 +621,10 @@ app.post("/api/orders", async (req: any, res: any) => {
   }
 });
 
-// GET Order history for a user (by email)
-app.get("/api/orders", async (req: any, res: any) => {
+// GET Order history for a user
+app.get("/api/orders", verifyToken, async (req: any, res: any) => {
   try {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({ success: false, error: "Email query parameter is required" });
-    }
+    const email = req.user.email;
     const orders = await ordersCollection.find({ email }).sort({ createdAt: -1 }).toArray();
     res.json({ success: true, orders });
   } catch (error: any) {
@@ -443,8 +632,150 @@ app.get("/api/orders", async (req: any, res: any) => {
   }
 });
 
+// ---------------- INQUIRIES ROUTES ----------------
 
+// POST Create an inquiry (Public)
+app.post("/api/inquiries", async (req: any, res: any) => {
+  try {
+    const { name, email, message } = req.body;
+    if (!name || !email || !message) {
+      return res.status(400).json({ success: false, error: "Name, email, and message are required" });
+    }
 
+    const newInquiry = {
+      name,
+      email,
+      message,
+      createdAt: new Date()
+    };
+
+    await inquiriesCollection.insertOne(newInquiry);
+    res.status(201).json({ success: true, message: "Inquiry submitted successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET Fetch all inquiries (Admin only)
+app.get("/api/admin/inquiries", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const inquiries = await inquiriesCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.json({ success: true, inquiries });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ---------------- SUBSCRIBERS ROUTES ----------------
+
+// POST Create a newsletter subscription (Public)
+app.post("/api/subscribers", async (req: any, res: any) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email is required" });
+    }
+
+    const existing = await subscribersCollection.findOne({ email });
+    if (existing) {
+      return res.json({ success: true, message: "Already subscribed!" });
+    }
+
+    const newSubscriber = {
+      email,
+      status: "Active",
+      createdAt: new Date()
+    };
+
+    await subscribersCollection.insertOne(newSubscriber);
+    res.status(201).json({ success: true, message: "Subscribed successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET Fetch all subscribers (Admin only)
+app.get("/api/admin/subscribers", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const subscribers = await subscribersCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.json({ success: true, subscribers });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST AI Chatbot endpoint (ZenithBot)
+app.post("/api/ai/chat", async (req: any, res: any) => {
+  try {
+    const { message } = req.body;
+    if (!message) {
+      return res.status(400).json({ success: false, error: "Message is required" });
+    }
+
+    const lowerMessage = message.toLowerCase();
+    let responseText = "";
+
+    // 1. Handle store policy FAQ questions
+    if (lowerMessage.includes("shipping") || lowerMessage.includes("delivery") || lowerMessage.includes("track")) {
+      responseText = "At ZenithMart, we offer free standard shipping on all orders worldwide! Deliveries typically take between 3-5 business days depending on your location. Once your order ships, we'll send you a confirmation email with tracking details.";
+    } else if (lowerMessage.includes("return") || lowerMessage.includes("refund") || lowerMessage.includes("exchange")) {
+      responseText = "We want you to love your purchase! That is why we provide a 30-day return policy. You can return any unused item in its original packaging for a full refund or exchange. Contact support@zenithmart.com to start your return.";
+    } else if (lowerMessage.includes("support") || lowerMessage.includes("contact") || lowerMessage.includes("help") || lowerMessage.includes("phone")) {
+      responseText = "Our dedicated support team is available 24/7. You can reach us via email at support@zenithmart.com or by calling our toll-free line at +1-800-555-0199.";
+    } else if (lowerMessage.includes("hello") || lowerMessage.includes("hi") || lowerMessage.includes("hey") || lowerMessage.includes("greetings")) {
+      responseText = "Hello there! Welcome to ZenithMart. I am ZenithBot, your virtual assistant. How can I help you with your shopping experience today?";
+    } else {
+      // 2. Query products collection based on keywords
+      const keywords = ["electronics", "laptop", "phone", "bag", "yoga", "clothing", "shoe", "watch", "camera", "perfume", "jacket"];
+      let foundKeyword = "";
+      for (const keyword of keywords) {
+        if (lowerMessage.includes(keyword)) {
+          foundKeyword = keyword;
+          break;
+        }
+      }
+
+      if (foundKeyword) {
+        // Query products from MongoDB matching the keyword
+        const query = {
+          $or: [
+            { category: { $regex: foundKeyword, $options: "i" } },
+            { title: { $regex: foundKeyword, $options: "i" } },
+            { shortDescription: { $regex: foundKeyword, $options: "i" } }
+          ]
+        };
+        const products = await productsCollection.find(query).limit(4).toArray();
+
+        if (products.length > 0) {
+          responseText = `I found some premium options in ${foundKeyword} for you:\n\n` +
+            products.map((p: any, index: number) => `${index + 1}. **${p.title}** - $${p.price} (Rating: ${p.rating}⭐)\n   *${p.shortDescription}*`).join("\n\n") +
+            "\n\nFeel free to explore these items or add them to your cart!";
+        } else {
+          responseText = `We do have some fantastic catalog options, but I couldn't find active listings matching "${foundKeyword}" right now. Try searching for other collections like Electronics or Accessories!`;
+        }
+      } else {
+        // General query search in title/descriptions
+        const query = {
+          $or: [
+            { title: { $regex: message, $options: "i" } },
+            { category: { $regex: message, $options: "i" } }
+          ]
+        };
+        const products = await productsCollection.find(query).limit(3).toArray();
+        if (products.length > 0) {
+          responseText = `Here are some products matching your interest:\n\n` +
+            products.map((p: any, index: number) => `${index + 1}. **${p.title}** - $${p.price}\n   *${p.shortDescription}*`).join("\n\n");
+        } else {
+          responseText = "I'm not sure I fully understand. You can ask me about product recommendations (e.g. 'Show me some cool electronics'), shipping policies, returns, or support contact details!";
+        }
+      }
+    }
+
+    res.json({ success: true, response: responseText });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`ZenithMart Server is running on port ${PORT}`);
