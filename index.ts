@@ -610,20 +610,28 @@ app.get("/api/cart", async (req: any, res: any) => {
 // POST Add or update item in cart
 app.post("/api/cart", async (req: any, res: any) => {
   try {
-    const { email, productId, quantity = 1 } = req.body;
+    const { email, productId, quantity = 1, isAbsolute = false } = req.body;
     if (!email || !productId) {
       return res.status(400).json({ success: false, error: "Email and productId are required" });
     }
     const existingItem = await cartCollection.findOne({ email, productId });
     if (existingItem) {
-      const newQty = Number(existingItem.quantity) + Number(quantity);
+      const newQty = isAbsolute ? Number(quantity) : (Number(existingItem.quantity) + Number(quantity));
+      if (newQty <= 0) {
+        await cartCollection.deleteOne({ _id: existingItem._id });
+        return res.json({ success: true, message: "Cart item removed" });
+      }
       await cartCollection.updateOne({ _id: existingItem._id }, { $set: { quantity: newQty } });
       res.json({ success: true, message: "Cart item quantity updated" });
     } else {
+      const targetQty = Number(quantity);
+      if (targetQty <= 0) {
+        return res.json({ success: true, message: "No item to add" });
+      }
       const result = await cartCollection.insertOne({
         email,
         productId,
-        quantity: Number(quantity),
+        quantity: targetQty,
         createdAt: new Date(),
       });
       res.status(201).json({ success: true, message: "Product added to cart", itemId: result.insertedId });
