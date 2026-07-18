@@ -52,6 +52,119 @@ async function connectDB() {
 }
 connectDB();
 
+// ---------------- AUTH ROUTES ----------------
+const crypto = require("node:crypto");
+const { SignJWT, jwtVerify } = require("jose-cjs");
+
+const JWT_SECRET = new TextEncoder().encode(
+  process.env.BETTER_AUTH_SECRET || "default_super_secret_key_zenithmart_123!"
+);
+
+function hashPassword(password: string) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, storedValue: string) {
+  if (!storedValue || !storedValue.includes(":")) return false;
+  const [salt, hash] = storedValue.split(":");
+  const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  return hash === verifyHash;
+}
+
+// User Registration
+app.post("/api/auth/register", async (req: any, res: any) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ success: false, error: "Name, email, and password are required" });
+    }
+
+    const existingUser = await userCollection.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, error: "User already exists with this email" });
+    }
+
+    const hashedPassword = hashPassword(password);
+    const newUser = {
+      name,
+      email,
+      password: hashedPassword,
+      createdAt: new Date(),
+    };
+
+    const result = await userCollection.insertOne(newUser);
+    res.status(201).json({ success: true, message: "User registered successfully", userId: result.insertedId });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// User Login
+app.post("/api/auth/login", async (req: any, res: any) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: "Email and password are required" });
+    }
+
+    const user = await userCollection.findOne({ email });
+    if (!user || !verifyPassword(password, user.password)) {
+      return res.status(401).json({ success: false, error: "Invalid email or password" });
+    }
+
+    const token = await new SignJWT({ email: user.email, name: user.name, id: user._id.toString() })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("2h")
+      .sign(JWT_SECRET);
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get User Profile
+app.get("/api/auth/profile", async (req: any, res: any) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Missing or invalid token" });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const email = payload.email;
+
+    const user = await userCollection.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (error: any) {
+    res.status(401).json({ success: false, error: "Unauthorized: Invalid or expired token" });
+  }
+});
+
 // ---------------- PRODUCTS ROUTES ----------------
 
 // GET all products with filtering, search, sort, and pagination
