@@ -340,6 +340,60 @@ app.delete("/api/cart/:id", async (req: any, res: any) => {
   }
 });
 
+// ---------------- FAVORITES ROUTES ----------------
+
+// GET Favorites for a user (by email)
+app.get("/api/favorites", async (req: any, res: any) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email query parameter is required" });
+    }
+    const favorites = await favoritesCollection.find({ email }).toArray();
+    // Populate product details for each favorite item
+    const populatedItems = await Promise.all(
+      favorites.map(async (item: any) => {
+        let productQuery;
+        if (ObjectId.isValid(item.productId)) {
+          productQuery = { _id: new ObjectId(item.productId) };
+        } else {
+          productQuery = { id: item.productId };
+        }
+        const product = await productsCollection.findOne(productQuery);
+        return { ...item, product };
+      })
+    );
+    res.json({ success: true, favorites: populatedItems });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST Toggle Favorite (Add or remove)
+app.post("/api/favorites", async (req: any, res: any) => {
+  try {
+    const { email, productId } = req.body;
+    if (!email || !productId) {
+      return res.status(400).json({ success: false, error: "Email and productId are required" });
+    }
+    const existing = await favoritesCollection.findOne({ email, productId });
+    if (existing) {
+      await favoritesCollection.deleteOne({ _id: existing._id });
+      res.json({ success: true, isFavorite: false, message: "Removed from favorites" });
+    } else {
+      await favoritesCollection.insertOne({
+        email,
+        productId,
+        createdAt: new Date()
+      });
+      res.json({ success: true, isFavorite: true, message: "Added to favorites" });
+    }
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 
 app.listen(PORT, () => {
   console.log(`ZenithMart Server is running on port ${PORT}`);
