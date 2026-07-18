@@ -241,6 +241,106 @@ app.get("/api/products/:id", async (req: any, res: any) => {
   }
 });
 
+// ---------------- CART ROUTES ----------------
+
+// GET Cart items for a user (by email)
+app.get("/api/cart", async (req: any, res: any) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email query parameter is required" });
+    }
+    const cartItems = await cartCollection.find({ email }).toArray();
+    // Populate product details for each cart item
+    const populatedItems = await Promise.all(
+      cartItems.map(async (item: any) => {
+        let productQuery;
+        if (ObjectId.isValid(item.productId)) {
+          productQuery = { _id: new ObjectId(item.productId) };
+        } else {
+          productQuery = { id: item.productId };
+        }
+        const product = await productsCollection.findOne(productQuery);
+        return { ...item, product };
+      })
+    );
+    res.json({ success: true, cart: populatedItems });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST Add or update item in cart
+app.post("/api/cart", async (req: any, res: any) => {
+  try {
+    const { email, productId, quantity = 1 } = req.body;
+    if (!email || !productId) {
+      return res.status(400).json({ success: false, error: "Email and productId are required" });
+    }
+    const existingItem = await cartCollection.findOne({ email, productId });
+    if (existingItem) {
+      const newQty = Number(existingItem.quantity) + Number(quantity);
+      await cartCollection.updateOne({ _id: existingItem._id }, { $set: { quantity: newQty } });
+      res.json({ success: true, message: "Cart item quantity updated" });
+    } else {
+      const result = await cartCollection.insertOne({
+        email,
+        productId,
+        quantity: Number(quantity),
+        createdAt: new Date(),
+      });
+      res.status(201).json({ success: true, message: "Product added to cart", itemId: result.insertedId });
+    }
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PUT Update quantity of a cart item
+app.put("/api/cart/:id", async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+    if (quantity === undefined || quantity === null) {
+      return res.status(400).json({ success: false, error: "Quantity is required" });
+    }
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+    const result = await cartCollection.updateOne(query, { $set: { quantity: Number(quantity) } });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Cart item not found" });
+    }
+    res.json({ success: true, message: "Cart item updated successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE Remove item from cart
+app.delete("/api/cart/:id", async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+    const result = await cartCollection.deleteOne(query);
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, error: "Cart item not found" });
+    }
+    res.json({ success: true, message: "Cart item removed successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log(`ZenithMart Server is running on port ${PORT}`);
 });
