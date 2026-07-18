@@ -53,7 +53,7 @@ async function connectDB() {
 connectDB();
 
 // ---------------- AUTH ROUTES ----------------
-const crypto = require("node:crypto");
+const nodeCrypto = require("node:crypto");
 const { SignJWT, jwtVerify } = require("jose-cjs");
 
 const JWT_SECRET = new TextEncoder().encode(
@@ -61,17 +61,18 @@ const JWT_SECRET = new TextEncoder().encode(
 );
 
 function hashPassword(password: string) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  const salt = nodeCrypto.randomBytes(16).toString("hex");
+  const hash = nodeCrypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
   return `${salt}:${hash}`;
 }
 
 function verifyPassword(password: string, storedValue: string) {
   if (!storedValue || !storedValue.includes(":")) return false;
   const [salt, hash] = storedValue.split(":");
-  const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
+  const verifyHash = nodeCrypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
   return hash === verifyHash;
 }
+
 
 // User Registration
 app.post("/api/auth/register", async (req: any, res: any) => {
