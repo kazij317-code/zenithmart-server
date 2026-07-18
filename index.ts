@@ -297,6 +297,34 @@ app.get("/api/admin/orders", verifyToken, verifyAdmin, async (req: any, res: any
   }
 });
 
+// PATCH Update order status (Admin only)
+app.patch("/api/admin/orders/:id/status", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ success: false, error: "Status is required" });
+    }
+
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const result = await ordersCollection.updateOne(query, { $set: { status } });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Order not found" });
+    }
+
+    res.json({ success: true, message: `Order status updated to ${status}` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET All Users list
 app.get("/api/admin/users", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
