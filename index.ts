@@ -393,6 +393,56 @@ app.post("/api/favorites", async (req: any, res: any) => {
   }
 });
 
+// ---------------- ORDERS ROUTES ----------------
+
+// POST Place a new order
+app.post("/api/orders", async (req: any, res: any) => {
+  try {
+    const { email, items, totalAmount, shippingAddress, paymentMethod } = req.body;
+    if (!email || !items || !totalAmount) {
+      return res.status(400).json({ success: false, error: "Email, items, and totalAmount are required" });
+    }
+
+    const newOrder = {
+      email,
+      items,
+      totalAmount: Number(totalAmount),
+      shippingAddress,
+      paymentMethod,
+      status: "Pending",
+      createdAt: new Date()
+    };
+
+    const result = await ordersCollection.insertOne(newOrder);
+
+    // Clear the cart for the user after placing the order
+    await cartCollection.deleteMany({ email });
+
+    res.status(201).json({
+      success: true,
+      message: "Order placed successfully and cart cleared",
+      orderId: result.insertedId
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET Order history for a user (by email)
+app.get("/api/orders", async (req: any, res: any) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email query parameter is required" });
+    }
+    const orders = await ordersCollection.find({ email }).sort({ createdAt: -1 }).toArray();
+    res.json({ success: true, orders });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 
 
 app.listen(PORT, () => {
