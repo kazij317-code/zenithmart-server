@@ -372,7 +372,7 @@ app.patch("/api/admin/users/:id/block", verifyToken, verifyAdmin, async (req: an
 // POST Create new product
 app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
-    const { title, shortDescription, fullDescription, price, category, stock, image, specifications } = req.body;
+    const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
     if (!title || !shortDescription || !fullDescription || price === undefined || !category || stock === undefined || !image) {
       return res.status(400).json({ success: false, error: "Missing required fields" });
     }
@@ -386,6 +386,7 @@ app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) =
       category,
       stock: Number(stock),
       image,
+      images: images || [],
       specifications: specifications || {},
       reviews: []
     };
@@ -423,7 +424,7 @@ app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: 
 app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
     const { id } = req.params;
-    const { title, shortDescription, fullDescription, price, category, stock, image, specifications } = req.body;
+    const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
     
     let query;
     if (ObjectId.isValid(id)) {
@@ -441,6 +442,7 @@ app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any
         category,
         stock: Number(stock),
         image,
+        images: images || [],
         specifications: specifications || {}
       }
     };
@@ -451,6 +453,51 @@ app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any
     }
 
     res.json({ success: true, message: "Product updated successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST Add review to a product
+app.post("/api/products/:id/reviews", async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { name, rating, comment } = req.body;
+
+    if (!name || !rating || !comment) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
+    }
+
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const review = {
+      name,
+      rating: Number(rating),
+      comment,
+      createdAt: new Date()
+    };
+
+    const product = await productsCollection.findOne(query);
+    if (!product) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    const reviews = product.reviews || [];
+    reviews.push(review);
+
+    // Re-calculate average product rating
+    const avgRating = reviews.reduce((sum: number, r: any) => sum + r.rating, 0) / reviews.length;
+
+    await productsCollection.updateOne(query, {
+      $set: { reviews, rating: Number(avgRating.toFixed(1)) }
+    });
+
+    res.status(201).json({ success: true, review });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
