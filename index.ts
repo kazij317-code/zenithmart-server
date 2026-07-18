@@ -56,13 +56,11 @@ connectDB();
 
 // ---------------- AUTH ROUTES ----------------
 const nodeCrypto = require("node:crypto");
-const { SignJWT, jwtVerify, createRemoteJWKSet } = require("jose-cjs");
+const { SignJWT, jwtVerify } = require("jose-cjs");
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.BETTER_AUTH_SECRET || "default_super_secret_key_zenithmart_123!"
 );
-
-const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/jwks`));
 
 function hashPassword(password: string) {
   const salt = nodeCrypto.randomBytes(16).toString("hex");
@@ -179,42 +177,9 @@ const verifyToken = async (req: any, res: any, next: any) => {
     }
 
     const token = authHeader.split(" ")[1];
-    
-    let payload;
-    try {
-      // 1. Try verifying using Better-Auth JWKS (asymmetric)
-      const result = await jwtVerify(token, JWKS);
-      payload = result.payload;
-    } catch (jwksErr: any) {
-      try {
-        // 2. Fallback to local JWT_SECRET (symmetric HS256)
-        const result = await jwtVerify(token, JWT_SECRET);
-        payload = result.payload;
-      } catch (jwtErr: any) {
-        throw jwtErr;
-      }
-    }
-    
-    const email = payload.email || payload.user?.email;
-    const userId = payload.sub || payload.id || payload.user?.id;
+    const { payload } = await jwtVerify(token, JWT_SECRET);
 
-    const query: any = {};
-    const orConditions = [];
-
-    if (email) orConditions.push({ email });
-    if (userId) {
-      orConditions.push({ id: userId });
-      if (ObjectId.isValid(userId)) {
-        orConditions.push({ _id: new ObjectId(userId) });
-      }
-    }
-
-    if (orConditions.length === 0) {
-      return res.status(401).json({ success: false, error: "Unauthorized: Invalid token payload structure" });
-    }
-
-    query.$or = orConditions;
-    const user = await userCollection.findOne(query);
+    const user = await userCollection.findOne({ email: payload.email });
     if (!user) {
       return res.status(404).json({ success: false, error: "User not found" });
     }
@@ -222,7 +187,6 @@ const verifyToken = async (req: any, res: any, next: any) => {
     req.user = user;
     next();
   } catch (error) {
-    console.error("JWT verify error details:", error);
     return res.status(401).json({ success: false, error: "Unauthorized: Invalid or expired token" });
   }
 };
@@ -242,7 +206,7 @@ app.get("/api/admin/stats", verifyToken, verifyAdmin, async (req: any, res: any)
   try {
     const productCount = await productsCollection.countDocuments();
     const userCount = await userCollection.countDocuments();
-    
+
     const orders = await ordersCollection.find({}).toArray();
     const orderCount = orders.length;
     const totalSales = orders.reduce((sum: number, order: any) => sum + (Number(order.totalAmount) || 0), 0);
@@ -254,7 +218,7 @@ app.get("/api/admin/stats", verifyToken, verifyAdmin, async (req: any, res: any)
       const date = new Date(today);
       date.setDate(today.getDate() - i);
       const dateString = date.toLocaleDateString("en-US", { weekday: "short" });
-      
+
       const dayStart = new Date(date);
       dayStart.setHours(0, 0, 0, 0);
       const dayEnd = new Date(date);
@@ -287,44 +251,6 @@ app.get("/api/admin/stats", verifyToken, verifyAdmin, async (req: any, res: any)
   }
 });
 
-// GET Fetch all orders (Admin only)
-app.get("/api/admin/orders", verifyToken, verifyAdmin, async (req: any, res: any) => {
-  try {
-    const orders = await ordersCollection.find({}).sort({ createdAt: -1 }).toArray();
-    res.json({ success: true, orders });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// PATCH Update order status (Admin only)
-app.patch("/api/admin/orders/:id/status", verifyToken, verifyAdmin, async (req: any, res: any) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    
-    if (!status) {
-      return res.status(400).json({ success: false, error: "Status is required" });
-    }
-
-    let query;
-    if (ObjectId.isValid(id)) {
-      query = { _id: new ObjectId(id) };
-    } else {
-      query = { id: id };
-    }
-
-    const result = await ordersCollection.updateOne(query, { $set: { status } });
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ success: false, error: "Order not found" });
-    }
-
-    res.json({ success: true, message: `Order status updated to ${status}` });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // GET All Users list
 app.get("/api/admin/users", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
@@ -334,8 +260,7 @@ app.get("/api/admin/users", verifyToken, verifyAdmin, async (req: any, res: any)
       name: u.name,
       email: u.email,
       role: u.role || "user",
-      isBlocked: !!u.isBlocked,
-      image: u.image || u.avatar || ""
+      isBlocked: !!u.isBlocked
     }));
     res.json({ success: true, users: mappedUsers });
   } catch (error: any) {
@@ -348,7 +273,7 @@ app.patch("/api/admin/users/:id/block", verifyToken, verifyAdmin, async (req: an
   try {
     const { id } = req.params;
     const { isBlocked } = req.body;
-    
+
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ success: false, error: "Invalid user ID" });
     }
@@ -373,7 +298,7 @@ app.patch("/api/admin/users/:id/block", verifyToken, verifyAdmin, async (req: an
 // POST Create new product
 app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
-    const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
+    const { title, shortDescription, fullDescription, price, category, stock, image, specifications } = req.body;
     if (!title || !shortDescription || !fullDescription || price === undefined || !category || stock === undefined || !image) {
       return res.status(400).json({ success: false, error: "Missing required fields" });
     }
@@ -387,7 +312,6 @@ app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) =
       category,
       stock: Number(stock),
       image,
-      images: images || [],
       specifications: specifications || {},
       reviews: []
     };
@@ -416,89 +340,6 @@ app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: 
     }
 
     res.json({ success: true, message: "Product deleted successfully" });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// PUT Update product details (Admin only)
-app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any) => {
-  try {
-    const { id } = req.params;
-    const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
-    
-    let query;
-    if (ObjectId.isValid(id)) {
-      query = { _id: new ObjectId(id) };
-    } else {
-      query = { id: id };
-    }
-
-    const updatedProduct = {
-      $set: {
-        title,
-        shortDescription,
-        fullDescription,
-        price: Number(price),
-        category,
-        stock: Number(stock),
-        image,
-        images: images || [],
-        specifications: specifications || {}
-      }
-    };
-
-    const result = await productsCollection.updateOne(query, updatedProduct);
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ success: false, error: "Product not found" });
-    }
-
-    res.json({ success: true, message: "Product updated successfully" });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// POST Add review to a product
-app.post("/api/products/:id/reviews", async (req: any, res: any) => {
-  try {
-    const { id } = req.params;
-    const { name, rating, comment } = req.body;
-
-    if (!name || !rating || !comment) {
-      return res.status(400).json({ success: false, error: "Missing required fields" });
-    }
-
-    let query;
-    if (ObjectId.isValid(id)) {
-      query = { _id: new ObjectId(id) };
-    } else {
-      query = { id: id };
-    }
-
-    const review = {
-      name,
-      rating: Number(rating),
-      comment,
-      createdAt: new Date()
-    };
-
-    const product = await productsCollection.findOne(query);
-    if (!product) {
-      return res.status(404).json({ success: false, error: "Product not found" });
-    }
-
-    const reviews = product.reviews || [];
-    reviews.push(review);
-
-    // Re-calculate average product rating
-    const avgRating = reviews.reduce((sum: number, r: any) => sum + r.rating, 0) / reviews.length;
-
-    await productsCollection.updateOne(query, {
-      $set: { reviews, rating: Number(avgRating.toFixed(1)) }
-    });
-
-    res.status(201).json({ success: true, review });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -610,28 +451,20 @@ app.get("/api/cart", async (req: any, res: any) => {
 // POST Add or update item in cart
 app.post("/api/cart", async (req: any, res: any) => {
   try {
-    const { email, productId, quantity = 1, isAbsolute = false } = req.body;
+    const { email, productId, quantity = 1 } = req.body;
     if (!email || !productId) {
       return res.status(400).json({ success: false, error: "Email and productId are required" });
     }
     const existingItem = await cartCollection.findOne({ email, productId });
     if (existingItem) {
-      const newQty = isAbsolute ? Number(quantity) : (Number(existingItem.quantity) + Number(quantity));
-      if (newQty <= 0) {
-        await cartCollection.deleteOne({ _id: existingItem._id });
-        return res.json({ success: true, message: "Cart item removed" });
-      }
+      const newQty = Number(existingItem.quantity) + Number(quantity);
       await cartCollection.updateOne({ _id: existingItem._id }, { $set: { quantity: newQty } });
       res.json({ success: true, message: "Cart item quantity updated" });
     } else {
-      const targetQty = Number(quantity);
-      if (targetQty <= 0) {
-        return res.json({ success: true, message: "No item to add" });
-      }
       const result = await cartCollection.insertOne({
         email,
         productId,
-        quantity: targetQty,
+        quantity: Number(quantity),
         createdAt: new Date(),
       });
       res.status(201).json({ success: true, message: "Product added to cart", itemId: result.insertedId });
@@ -866,30 +699,6 @@ app.get("/api/admin/subscribers", verifyToken, verifyAdmin, async (req: any, res
   try {
     const subscribers = await subscribersCollection.find({}).sort({ createdAt: -1 }).toArray();
     res.json({ success: true, subscribers });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// GET AI recommendations based on category
-app.get("/api/ai/recommendations", async (req: any, res: any) => {
-  try {
-    const { category, productId } = req.query;
-    if (!category) {
-      return res.status(400).json({ success: false, error: "Category query parameter is required" });
-    }
-
-    let query: any = { category: String(category) };
-    if (productId) {
-      if (ObjectId.isValid(productId)) {
-        query._id = { $ne: new ObjectId(productId) };
-      } else {
-        query.id = { $ne: productId };
-      }
-    }
-
-    const recommendations = await productsCollection.find(query).limit(4).toArray();
-    res.json({ success: true, recommendations });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
