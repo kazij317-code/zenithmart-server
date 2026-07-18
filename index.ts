@@ -334,7 +334,8 @@ app.get("/api/admin/users", verifyToken, verifyAdmin, async (req: any, res: any)
       name: u.name,
       email: u.email,
       role: u.role || "user",
-      isBlocked: !!u.isBlocked
+      isBlocked: !!u.isBlocked,
+      image: u.image || u.avatar || ""
     }));
     res.json({ success: true, users: mappedUsers });
   } catch (error: any) {
