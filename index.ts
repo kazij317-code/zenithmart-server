@@ -287,6 +287,16 @@ app.get("/api/admin/stats", verifyToken, verifyAdmin, async (req: any, res: any)
   }
 });
 
+// GET Fetch all orders (Admin only)
+app.get("/api/admin/orders", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const orders = await ordersCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.json({ success: true, orders });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET All Users list
 app.get("/api/admin/users", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
@@ -376,6 +386,43 @@ app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: 
     }
 
     res.json({ success: true, message: "Product deleted successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PUT Update product details (Admin only)
+app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { title, shortDescription, fullDescription, price, category, stock, image, specifications } = req.body;
+    
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const updatedProduct = {
+      $set: {
+        title,
+        shortDescription,
+        fullDescription,
+        price: Number(price),
+        category,
+        stock: Number(stock),
+        image,
+        specifications: specifications || {}
+      }
+    };
+
+    const result = await productsCollection.updateOne(query, updatedProduct);
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    res.json({ success: true, message: "Product updated successfully" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
