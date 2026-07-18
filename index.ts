@@ -52,6 +52,82 @@ async function connectDB() {
 }
 connectDB();
 
+// ---------------- PRODUCTS ROUTES ----------------
+
+// GET all products with filtering, search, sort, and pagination
+app.get("/api/products", async (req: any, res: any) => {
+  try {
+    const { search, category, minPrice, maxPrice, sortBy, page = 1, limit = 12 } = req.query;
+    const query: any = {};
+
+    if (search) {
+      query.$or = [
+        { title: { $regex: String(search), $options: "i" } },
+        { shortDescription: { $regex: String(search), $options: "i" } },
+        { fullDescription: { $regex: String(search), $options: "i" } }
+      ];
+    }
+
+    if (category) {
+      query.category = String(category);
+    }
+
+    if (minPrice || maxPrice) {
+      query.price = {};
+      if (minPrice) query.price.$gte = Number(minPrice);
+      if (maxPrice) query.price.$lte = Number(maxPrice);
+    }
+
+    let sort: any = {};
+    if (sortBy === "price_asc") sort.price = 1;
+    else if (sortBy === "price_desc") sort.price = -1;
+    else if (sortBy === "rating") sort.rating = -1;
+
+    const skipIndex = (Number(page) - 1) * Number(limit);
+
+    const total = await productsCollection.countDocuments(query);
+    const data = await productsCollection
+      .find(query)
+      .sort(sort)
+      .skip(skipIndex)
+      .limit(Number(limit))
+      .toArray();
+
+    res.json({
+      success: true,
+      products: data,
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(total / Number(limit))
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET Single Product details
+app.get("/api/products/:id", async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+    const product = await productsCollection.findOne(query);
+    if (!product) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+    res.json({ success: true, product });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`ZenithMart Server is running on port ${PORT}`);
 });
