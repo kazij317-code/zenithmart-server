@@ -179,7 +179,26 @@ const verifyToken = async (req: any, res: any, next: any) => {
     const token = authHeader.split(" ")[1];
     const { payload } = await jwtVerify(token, JWT_SECRET);
     
-    const user = await userCollection.findOne({ email: payload.email });
+    const email = payload.email || payload.user?.email;
+    const userId = payload.sub || payload.id || payload.user?.id;
+
+    const query: any = {};
+    const orConditions = [];
+
+    if (email) orConditions.push({ email });
+    if (userId) {
+      orConditions.push({ id: userId });
+      if (ObjectId.isValid(userId)) {
+        orConditions.push({ _id: new ObjectId(userId) });
+      }
+    }
+
+    if (orConditions.length === 0) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Invalid token payload structure" });
+    }
+
+    query.$or = orConditions;
+    const user = await userCollection.findOne(query);
     if (!user) {
       return res.status(404).json({ success: false, error: "User not found" });
     }
@@ -187,6 +206,7 @@ const verifyToken = async (req: any, res: any, next: any) => {
     req.user = user;
     next();
   } catch (error) {
+    console.error("JWT verify error details:", error);
     return res.status(401).json({ success: false, error: "Unauthorized: Invalid or expired token" });
   }
 };
@@ -699,6 +719,30 @@ app.get("/api/admin/subscribers", verifyToken, verifyAdmin, async (req: any, res
   try {
     const subscribers = await subscribersCollection.find({}).sort({ createdAt: -1 }).toArray();
     res.json({ success: true, subscribers });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET AI recommendations based on category
+app.get("/api/ai/recommendations", async (req: any, res: any) => {
+  try {
+    const { category, productId } = req.query;
+    if (!category) {
+      return res.status(400).json({ success: false, error: "Category query parameter is required" });
+    }
+
+    let query: any = { category: String(category) };
+    if (productId) {
+      if (ObjectId.isValid(productId)) {
+        query._id = { $ne: new ObjectId(productId) };
+      } else {
+        query.id = { $ne: productId };
+      }
+    }
+
+    const recommendations = await productsCollection.find(query).limit(4).toArray();
+    res.json({ success: true, recommendations });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
