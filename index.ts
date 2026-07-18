@@ -56,11 +56,13 @@ connectDB();
 
 // ---------------- AUTH ROUTES ----------------
 const nodeCrypto = require("node:crypto");
-const { SignJWT, jwtVerify } = require("jose-cjs");
+const { SignJWT, jwtVerify, createRemoteJWKSet } = require("jose-cjs");
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.BETTER_AUTH_SECRET || "default_super_secret_key_zenithmart_123!"
 );
+
+const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL || "http://localhost:3000"}/api/auth/jwks`));
 
 function hashPassword(password: string) {
   const salt = nodeCrypto.randomBytes(16).toString("hex");
@@ -177,7 +179,21 @@ const verifyToken = async (req: any, res: any, next: any) => {
     }
 
     const token = authHeader.split(" ")[1];
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    
+    let payload;
+    try {
+      // 1. Try verifying using Better-Auth JWKS (asymmetric)
+      const result = await jwtVerify(token, JWKS);
+      payload = result.payload;
+    } catch (jwksErr: any) {
+      try {
+        // 2. Fallback to local JWT_SECRET (symmetric HS256)
+        const result = await jwtVerify(token, JWT_SECRET);
+        payload = result.payload;
+      } catch (jwtErr: any) {
+        throw jwtErr;
+      }
+    }
     
     const email = payload.email || payload.user?.email;
     const userId = payload.sub || payload.id || payload.user?.id;
