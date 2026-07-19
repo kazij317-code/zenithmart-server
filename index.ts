@@ -451,23 +451,34 @@ app.get("/api/cart", async (req: any, res: any) => {
 // POST Add or update item in cart
 app.post("/api/cart", async (req: any, res: any) => {
   try {
-    const { email, productId, quantity = 1 } = req.body;
+    const { email, productId, quantity = 1, isAbsolute = false } = req.body;
     if (!email || !productId) {
       return res.status(400).json({ success: false, error: "Email and productId are required" });
     }
     const existingItem = await cartCollection.findOne({ email, productId });
     if (existingItem) {
-      const newQty = Number(existingItem.quantity) + Number(quantity);
-      await cartCollection.updateOne({ _id: existingItem._id }, { $set: { quantity: newQty } });
-      res.json({ success: true, message: "Cart item quantity updated" });
+      const qtyNum = Number(quantity);
+      const newQty = isAbsolute ? qtyNum : (Number(existingItem.quantity) + qtyNum);
+      if (newQty <= 0) {
+        await cartCollection.deleteOne({ _id: existingItem._id });
+        res.json({ success: true, message: "Cart item removed" });
+      } else {
+        await cartCollection.updateOne({ _id: existingItem._id }, { $set: { quantity: newQty } });
+        res.json({ success: true, message: "Cart item quantity updated" });
+      }
     } else {
-      const result = await cartCollection.insertOne({
-        email,
-        productId,
-        quantity: Number(quantity),
-        createdAt: new Date(),
-      });
-      res.status(201).json({ success: true, message: "Product added to cart", itemId: result.insertedId });
+      const qtyNum = Number(quantity);
+      if (qtyNum > 0) {
+        const result = await cartCollection.insertOne({
+          email,
+          productId,
+          quantity: qtyNum,
+          createdAt: new Date(),
+        });
+        res.status(201).json({ success: true, message: "Product added to cart", itemId: result.insertedId });
+      } else {
+        res.json({ success: true, message: "Product quantity is 0, not adding to cart" });
+      }
     }
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
