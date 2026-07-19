@@ -56,11 +56,19 @@ connectDB();
 
 // ---------------- AUTH ROUTES ----------------
 const nodeCrypto = require("node:crypto");
-const { SignJWT, jwtVerify } = require("jose-cjs");
+const { SignJWT, jwtVerify, decodeJwt, createRemoteJWKSet } = require("jose-cjs");
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.BETTER_AUTH_SECRET || "default_super_secret_key_zenithmart_123!"
 );
+
+let JWKS: any;
+try {
+  const jwksUri = `${clientUrl}/api/auth/jwks`;
+  JWKS = createRemoteJWKSet(new URL(jwksUri));
+} catch (e) {
+  console.error("Failed to initialize JWKS client:", e);
+}
 
 function hashPassword(password: string) {
   const salt = nodeCrypto.randomBytes(16).toString("hex");
@@ -177,7 +185,30 @@ const verifyToken = async (req: any, res: any, next: any) => {
     }
 
     const token = authHeader.split(" ")[1];
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    
+    let payload: any;
+    try {
+      const decoded = decodeJwt(token);
+      console.log("Decoded JWT Payload:", decoded);
+    } catch (err: any) {
+      console.error("Decode JWT error:", err.message);
+    }
+
+    // Try JWKS verification first (for Better-Auth JWT plugin)
+    if (JWKS) {
+      try {
+        const result = await jwtVerify(token, JWKS);
+        payload = result.payload;
+      } catch (jwksError: any) {
+        console.warn("JWKS verification failed, trying JWT_SECRET:", jwksError.message);
+      }
+    }
+
+    // Fallback to JWT_SECRET if JWKS failed or was not initialized
+    if (!payload) {
+      const result = await jwtVerify(token, JWT_SECRET);
+      payload = result.payload;
+    }
 
     const user = await userCollection.findOne({ email: payload.email });
     if (!user) {
@@ -187,6 +218,7 @@ const verifyToken = async (req: any, res: any, next: any) => {
     req.user = user;
     next();
   } catch (error) {
+    console.error("JWT Verification error:", error);
     return res.status(401).json({ success: false, error: "Unauthorized: Invalid or expired token" });
   }
 };
