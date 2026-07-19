@@ -332,7 +332,7 @@ app.patch("/api/admin/users/:id/block", verifyToken, verifyAdmin, async (req: an
 // POST Create new product
 app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) => {
   try {
-    const { title, shortDescription, fullDescription, price, category, stock, image, specifications } = req.body;
+    const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
     if (!title || !shortDescription || !fullDescription || price === undefined || !category || stock === undefined || !image) {
       return res.status(400).json({ success: false, error: "Missing required fields" });
     }
@@ -346,6 +346,7 @@ app.post("/api/products", verifyToken, verifyAdmin, async (req: any, res: any) =
       category,
       stock: Number(stock),
       image,
+      images: images || [],
       specifications: specifications || {},
       reviews: []
     };
@@ -725,14 +726,15 @@ app.get("/api/orders", verifyToken, async (req: any, res: any) => {
 // POST Create an inquiry (Public)
 app.post("/api/inquiries", async (req: any, res: any) => {
   try {
-    const { name, email, message } = req.body;
-    if (!name || !email || !message) {
-      return res.status(400).json({ success: false, error: "Name, email, and message are required" });
+    const { name, email, subject, message } = req.body;
+    if (!name || !email || !subject || !message) {
+      return res.status(400).json({ success: false, error: "Name, email, subject, and message are required" });
     }
 
     const newInquiry = {
       name,
       email,
+      subject,
       message,
       createdAt: new Date()
     };
