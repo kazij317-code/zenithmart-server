@@ -451,6 +451,49 @@ app.get("/api/products/:id", async (req: any, res: any) => {
   }
 });
 
+// POST Add a review to a product
+app.post("/api/products/:id/reviews", async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { name, rating, comment } = req.body;
+    if (!name || rating === undefined || !comment) {
+      return res.status(400).json({ success: false, error: "Name, rating, and comment are required" });
+    }
+
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const product = await productsCollection.findOne(query);
+    if (!product) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    const newReview = {
+      name,
+      rating: Number(rating),
+      comment,
+      createdAt: new Date()
+    };
+
+    const reviews = product.reviews || [];
+    const updatedReviews = [...reviews, newReview];
+    const avgRating = updatedReviews.reduce((sum: number, r: any) => sum + r.rating, 0) / updatedReviews.length;
+
+    await productsCollection.updateOne(query, {
+      $push: { reviews: newReview },
+      $set: { rating: Number(avgRating.toFixed(1)) }
+    });
+
+    res.status(201).json({ success: true, review: newReview });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ---------------- CART ROUTES ----------------
 
 // GET Cart items for a user (by email)
