@@ -704,6 +704,32 @@ app.get("/api/admin/subscribers", verifyToken, verifyAdmin, async (req: any, res
   }
 });
 
+// GET Recommendations / Related items by category
+app.get("/api/ai/recommendations", async (req: any, res: any) => {
+  try {
+    const { category, productId } = req.query;
+    if (!category) {
+      return res.status(400).json({ success: false, error: "Category query parameter is required" });
+    }
+    
+    // Clean category to match singular/plural forms (e.g. Outdoor and Outdoors)
+    const cleanedCategory = category.trim().replace(/s$/i, "");
+    const query: any = { category: { $regex: cleanedCategory, $options: "i" } };
+    if (productId) {
+      if (ObjectId.isValid(productId)) {
+        query._id = { $ne: new ObjectId(productId) };
+      } else {
+        query.id = { $ne: productId };
+      }
+    }
+    
+    const recommendations = await productsCollection.find(query).limit(4).toArray();
+    res.json({ success: true, recommendations });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST AI Chatbot endpoint (ZenithBot)
 app.post("/api/ai/chat", async (req: any, res: any) => {
   try {
