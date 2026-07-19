@@ -380,6 +380,42 @@ app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: 
   }
 });
 
+// PUT Update a product
+app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
+    
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const updateFields: any = {};
+    if (title !== undefined) updateFields.title = title;
+    if (shortDescription !== undefined) updateFields.shortDescription = shortDescription;
+    if (fullDescription !== undefined) updateFields.fullDescription = fullDescription;
+    if (price !== undefined) updateFields.price = Number(price);
+    if (category !== undefined) updateFields.category = category;
+    if (stock !== undefined) updateFields.stock = Number(stock);
+    if (image !== undefined) updateFields.image = image;
+    if (images !== undefined) updateFields.images = images || [];
+    if (specifications !== undefined) updateFields.specifications = specifications || {};
+
+    const result = await productsCollection.updateOne(query, { $set: updateFields });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    res.json({ success: true, message: "Product updated successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 // GET all products with filtering, search, sort, and pagination
 app.get("/api/products", async (req: any, res: any) => {
   try {
