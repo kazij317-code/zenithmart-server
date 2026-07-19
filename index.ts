@@ -185,7 +185,7 @@ const verifyToken = async (req: any, res: any, next: any) => {
     }
 
     const token = authHeader.split(" ")[1];
-    
+
     let payload: any;
     try {
       const decoded = decodeJwt(token);
@@ -385,7 +385,7 @@ app.put("/api/products/:id", verifyToken, verifyAdmin, async (req: any, res: any
   try {
     const { id } = req.params;
     const { title, shortDescription, fullDescription, price, category, stock, image, images, specifications } = req.body;
-    
+
     let query;
     if (ObjectId.isValid(id)) {
       query = { _id: new ObjectId(id) };
@@ -871,7 +871,7 @@ app.get("/api/ai/recommendations", async (req: any, res: any) => {
     if (!category) {
       return res.status(400).json({ success: false, error: "Category query parameter is required" });
     }
-    
+
     // Clean category to match singular/plural forms (e.g. Outdoor and Outdoors)
     const cleanedCategory = category.trim().replace(/s$/i, "");
     const query: any = { category: { $regex: cleanedCategory, $options: "i" } };
@@ -882,7 +882,7 @@ app.get("/api/ai/recommendations", async (req: any, res: any) => {
         query.id = { $ne: productId };
       }
     }
-    
+
     const recommendations = await productsCollection.find(query).limit(4).toArray();
     res.json({ success: true, recommendations });
   } catch (error: any) {
